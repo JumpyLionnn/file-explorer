@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 eframe = "0.22.0"
 egui = "0.22.0"
+notify = "6.0.1"
 
