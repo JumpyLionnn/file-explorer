@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use notify::Watcher;
 
+
 fn main() {
     eframe::run_native("file explorer", Default::default(), Box::new(|cc| Box::new(FileExplorer::new(cc)))).unwrap();
 }
@@ -13,7 +14,8 @@ struct FileExplorer {
     directory: PathBuf,
     watcher: notify::RecommendedWatcher,
     receiver: mpsc::Receiver<()>,
-    selected_index: Option<usize>
+    selected_index: Option<usize>,
+    error_dialog: Option<String>
 }
 
 impl FileExplorer {
@@ -36,7 +38,8 @@ impl FileExplorer {
             child_directories: Vec::new(),
             watcher,
             receiver,
-            selected_index: None
+            selected_index: None,
+            error_dialog: None
         };
 
         explorer.refresh_childs();
@@ -113,10 +116,36 @@ impl eframe::App for FileExplorer {
             let open_request = self.file_list(ui);
             if let Some(path) = open_request {
                 if let Err(error) = self.open(path) {
-                    println!("ERROR: couldnt open file {:?}", error);
+                    self.error_dialog = Some(error);
                 }
             }
         });
+
+        if self.error_dialog.is_some() {
+            let mut open = true;
+            let center = ctx.screen_rect().center();
+            egui::Window::new("Error")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .default_pos(center)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui|{
+                    let message: &String = &self.error_dialog.as_ref().unwrap();
+                    ui.label(message);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        ui.style_mut().spacing.button_padding = (24.0, 4.0).into();
+                        if ui.button("ok").clicked() {
+                            self.error_dialog = None;
+                        }
+                    });
+                });
+            if !open {
+                self.error_dialog = None;
+            }
+        }
+
+        
     }
 }
 
