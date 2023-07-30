@@ -1,4 +1,5 @@
 use eframe::egui;
+use widgets::file_item_height;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -89,23 +90,30 @@ impl FileExplorer {
 
     fn file_list(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
         let mut open_request = None;
+        let item_padding_y = 4.0;
         let width = ui.available_width();
-        for (index, entry) in self.child_directories.iter().enumerate() {
-            let selected = match self.selected_index {
-                Some(selected_index) => selected_index == index,
-                None => false,
-            };
-            let item = widgets::file_item(ui, entry, width, selected);
-            if item.double_clicked() {
-                open_request = Some(entry.clone());
+        let raw_height = file_item_height(ui) + item_padding_y;
+        let total_rows = self.child_directories.len();
+        egui::ScrollArea::vertical().show_rows(ui, raw_height, total_rows, |ui, row_range| {
+            println!("{:?}", row_range);
+            for index in row_range {
+                let entry = &self.child_directories[index];
+                let selected = match self.selected_index {
+                    Some(selected_index) => selected_index == index,
+                    None => false,
+                };
+                let item = widgets::file_item(ui, entry, width, selected, item_padding_y);
+                if item.double_clicked() {
+                    open_request = Some(entry.clone());
+                }
+                else if item.is_pointer_button_down_on() {
+                    self.selected_index = Some(index);
+                }
+                else if selected && item.clicked_elsewhere() {
+                    self.selected_index = None;
+                }
             }
-            else if item.is_pointer_button_down_on() {
-                self.selected_index = Some(index);
-            }
-            else if selected && item.clicked_elsewhere() {
-                self.selected_index = None;
-            }
-        }
+        });
         open_request
     }
 }

@@ -1,10 +1,10 @@
 use std::path::{PathBuf, self};
 use crate::gui_extension::*;
 
-pub fn file_item(ui: &mut egui::Ui, entry: &PathBuf, width: f32, selected: bool) -> egui::Response {
-    let height = ui.spacing().interact_size.y;
-    let padding = 4.0;
-    let size = egui::vec2(width, height + padding);
+
+pub fn file_item(ui: &mut egui::Ui, entry: &PathBuf, width: f32, selected: bool, padding_y: f32) -> egui::Response {
+    let height = file_item_height(ui);
+    let size = egui::vec2(width, height + padding_y);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
@@ -23,11 +23,14 @@ pub fn file_item(ui: &mut egui::Ui, entry: &PathBuf, width: f32, selected: bool)
         let text_left_margin = 5.0;
         let text_pos = egui::Pos2 {
             x: rect.min.x + text_left_margin,
-            y: rect.min.y + row_height / 2.0 + padding / 2.0
+            y: rect.min.y + row_height / 2.0 + padding_y / 2.0
         };
         painter.text(text_pos, egui::Align2::LEFT_CENTER, name, font_id, visuals.fg_stroke.color);
     }
     response
+}
+pub fn file_item_height(ui: &egui::Ui) -> f32 {
+    ui.spacing().interact_size.y
 }
 
 pub fn path_navigation_bar(ui: &mut egui::Ui, path: &PathBuf, width: f32) -> Option<path::PathBuf> {
