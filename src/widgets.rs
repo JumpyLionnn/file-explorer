@@ -95,3 +95,63 @@ pub fn path_navigation_bar(ui: &mut egui::Ui, path: &PathBuf, width: f32) -> Opt
 
     path_component_clicked
 }
+
+pub fn error_dialog(ctx: &egui::Context, message: &str) -> bool {
+    let mut open = true;
+    let center = ctx.screen_rect().center();
+    let res = egui::Window::new("Error")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .default_pos(center)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .show(ctx, |ui|{
+            ui.label(message);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                ui.style_mut().spacing.button_padding = (24.0, 4.0).into();
+                if ui.button("ok").clicked() {
+                    return true;
+                }
+                false
+            }).inner
+        });
+    if !open {
+        return true;
+    }
+    if let Some(res) = res {
+        return res.inner.unwrap_or(false);
+    }
+    return false;
+}
+
+pub fn delete_dialog(ctx: &egui::Context, name: &str, item_type: &str) -> Option<bool> {
+    let mut open = true;
+    let center = ctx.screen_rect().center();
+    let res = egui::Window::new("Error")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .default_pos(center)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .show(ctx, |ui|{
+            ui.label(format!("Are you sure you want to delete this {item_type}?"));
+            ui.label(name);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                ui.style_mut().spacing.button_padding = (24.0, 4.0).into();
+                if ui.button("No").clicked() {
+                    return Some(false);
+                }
+                if ui.button("Yes").clicked() {
+                    return Some(true);
+                }
+                None
+            }).inner
+        });
+    if !open {
+        return Some(false);
+    }
+    if let Some(res) = res {
+        return res.inner.unwrap_or(None);
+    }
+    return None;
+}
