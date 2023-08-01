@@ -1,37 +1,9 @@
 use std::path::{PathBuf, self};
+
 use crate::gui_extension::*;
 
 
-pub fn file_item(ui: &mut egui::Ui, entry: &PathBuf, width: f32, selected: bool, padding_y: f32) -> egui::Response {
-    let height = file_item_height(ui);
-    let size = egui::vec2(width, height + padding_y);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        let style = ui.style();
-        let font_id = egui::style::TextStyle::Button.resolve(style);
-        let row_height = ui.fonts(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
-        let visuals = style.interact_selectable(&response, selected);
-        if response.hovered() || selected {
-            painter.rect(rect, egui::Rounding::none(), visuals.bg_fill, egui::Stroke::NONE);
-        }
-        let name = match entry.file_name() {
-            Some(name) => name.to_str().unwrap_or("Unable to display the name"),
-            None => "Unable to display the name",
-        };
-        let text_left_margin = 5.0;
-        let text_pos = egui::Pos2 {
-            x: rect.min.x + text_left_margin,
-            y: rect.min.y + row_height / 2.0 + padding_y / 2.0
-        };
-        painter.text(text_pos, egui::Align2::LEFT_CENTER, name, font_id, visuals.fg_stroke.color);
-    }
-    response
-}
-pub fn file_item_height(ui: &egui::Ui) -> f32 {
-    ui.spacing().interact_size.y
-}
 
 pub fn path_navigation_bar(ui: &mut egui::Ui, path: &PathBuf, width: f32) -> Option<path::PathBuf> {
     let component_padding = egui::vec2(5.0, 7.0);
@@ -127,7 +99,7 @@ pub fn error_dialog(ctx: &egui::Context, message: &str) -> bool {
 pub fn delete_dialog(ctx: &egui::Context, name: &str, item_type: &str) -> Option<bool> {
     let mut open = true;
     let center = ctx.screen_rect().center();
-    let res = egui::Window::new("Error")
+    let res = egui::Window::new(format!("Delete {item_type}"))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -154,4 +126,106 @@ pub fn delete_dialog(ctx: &egui::Context, name: &str, item_type: &str) -> Option
         return res.inner.unwrap_or(None);
     }
     return None;
+}
+
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(default))]
+struct RenamableLabelState {
+    text: Option<String>
+}
+impl RenamableLabelState {
+    pub fn load(ctx: &egui::Context, id: egui::Id) -> Option<Self> {
+        ctx.data(|d| d.get_temp(id))
+    }
+
+    pub fn store(self, ctx: &egui::Context, id: egui::Id) {
+        ctx.data_mut(|d| d.insert_temp(id, self))
+    }
+}
+
+pub struct RenamableLabel {
+    text: String,
+    request_renaming: bool
+}
+
+const RENAMABLE_LABLE_INPUT_MARGIN: egui::Vec2 = egui::vec2(4.0, 2.0);
+
+impl RenamableLabel {
+    pub fn new(text: String) -> Self {
+        Self { 
+            text,
+            request_renaming: false
+        }
+    }
+
+    pub fn rename(&mut self) -> &mut Self {
+        self.request_renaming = true;
+        self
+    }
+
+    pub fn show(self, ui: &mut egui::Ui) -> egui::InnerResponse<Option<String>> {
+        let id = egui::Id::new(&self.text);
+        let mut state = RenamableLabelState::load(ui.ctx(), id).unwrap_or(RenamableLabelState { text: None });
+        match state.text {
+            Some(mut text) => {
+                let (renamed, response) = input(ui, &mut text, false);
+                let res;
+                if renamed {
+                    res = egui::InnerResponse::new(if text.is_empty() { None } else { Some(text) }, response);
+                    state.text = None;
+                    state.store(ui.ctx(), id);
+                }
+                else {
+                    res = egui::InnerResponse::new(None, response);
+                    state.text = Some(text);
+                    state.store(ui.ctx(), id);
+                }
+                res
+            },
+            None => {
+                if self.request_renaming {
+                    let mut text = self.text;
+                    let (renamed, response) = input(ui, &mut text, true);
+                    if renamed {
+                        let state = RenamableLabelState {
+                            text: None
+                        };
+                        state.store(ui.ctx(), id);
+                        egui::InnerResponse::new(if text.is_empty() { None } else { Some(text) }, response)
+                    }
+                    else {
+                        let state = RenamableLabelState {
+                            text: Some(text)
+                        };
+                        state.store(ui.ctx(), id);
+                        egui::InnerResponse::new(None, response)  
+                    }
+                }
+                else {
+                    ui.horizontal(|ui| {
+                        ui.add_space(RENAMABLE_LABLE_INPUT_MARGIN.x);
+                        egui::InnerResponse::new(None, ui.label(self.text))
+                    }).inner
+                }
+            }
+        }
+    }
+}
+
+fn input(ui: &mut egui::Ui, text: &mut String, select: bool) -> (bool, egui::Response) {
+    let text_edit = egui::TextEdit::singleline(text).margin(RENAMABLE_LABLE_INPUT_MARGIN);
+    let mut output = text_edit.show(ui);
+    if select {
+        output.response.request_focus();
+        let selection = egui::text_edit::CCursorRange::two(
+            egui::text::CCursor::new(0), 
+            egui::text::CCursor::new(text.len())
+        );
+        output.state.set_ccursor_range(Some(selection));
+        output.state.store(ui.ctx(), output.response.id);
+    }
+    
+    (output.response.lost_focus(), output.response)
 }

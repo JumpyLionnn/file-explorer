@@ -1,6 +1,6 @@
 mod widgets;
 mod gui_extension;
-use widgets::file_item_height;
+mod file_list;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -116,41 +116,6 @@ impl FileExplorer {
         }
         Ok(())
     }
-
-    fn file_list(&mut self, ui: &mut egui::Ui) -> Option<FileAction> {
-        let mut file_action = None;
-        let item_padding_y = 4.0;
-        let width = ui.available_width();
-        let raw_height = file_item_height(ui) + item_padding_y;
-        let total_rows = self.child_directories.len();
-        egui::ScrollArea::vertical().show_rows(ui, raw_height, total_rows, |ui, row_range| {
-            for index in row_range {
-                let entry = &self.child_directories[index];
-                let selected = match self.selected_index {
-                    Some(selected_index) => selected_index == index,
-                    None => false,
-                };
-                let item = widgets::file_item(ui, entry, width, selected, item_padding_y);
-                if item.double_clicked() {
-                    file_action = Some(FileAction::Open(entry.clone()));
-                }
-                else if item.is_pointer_button_down_on() {
-                    self.selected_index = Some(index);
-                }
-                else if selected && item.clicked_elsewhere() {
-                    self.selected_index = None;
-                }
-                
-                item.context_menu(|ui| {
-                    if ui.button("delete").clicked() {
-                        file_action = Some(FileAction::Delete(entry.clone()));
-                        ui.close_menu();
-                    } 
-                });
-            }
-        });
-        file_action
-    }
 }
 
 impl eframe::App for FileExplorer {
@@ -167,24 +132,33 @@ impl eframe::App for FileExplorer {
                 }
             }
             
-            let open_request = self.file_list(ui);
+            let file_list = file_list::FileListWidget::new(&self.child_directories, self.selected_index);
+            let open_request = file_list.show(ui);
             if let Some(action) = open_request {
                 match action {
-                    FileAction::Open(path) => {
+                    file_list::FileListAction::Open(path) => {
                         if let Err(error) = self.open(path) {
                             self.error_dialog = Some(error);
                         }
                     },
-                    FileAction::Delete(path) => {
+                    file_list::FileListAction::Delete(path) => {
                         if let Err(error) = self.try_delete_item(path) {
                             self.error_dialog = Some(error.to_string());
                         }
                     },
+                    file_list::FileListAction::Rename(path, name) => {
+                        if let Err(error) = fs::rename(path, name) {
+                            self.error_dialog = Some(error.to_string());
+                        }
+                    },
+                    file_list::FileListAction::Select(index) => {
+                        self.selected_index = Some(index);
+                    },
+                    file_list::FileListAction::Deselect => {
+                        self.selected_index = None;
+                    }, 
                 }
-                
-            }
-
-            
+            } 
         });
 
         if let Some(message) = &self.error_dialog {
@@ -193,7 +167,7 @@ impl eframe::App for FileExplorer {
             }
         }
         if let Some(path) = &self.delete_dialog {
-            let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("unkown")).to_string_lossy().to_string();
+            let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("unknown")).to_string_lossy().to_string();
             let item_type = if path.is_file() {"file"} else if path.is_dir() {"folder"} else {"item"};
             if let Some(res) = widgets::delete_dialog(ctx, &name, item_type) {
                 if res {
@@ -214,10 +188,6 @@ impl eframe::App for FileExplorer {
     }
 }
 
-enum FileAction {
-    Open(PathBuf),
-    Delete(PathBuf)
-}
 
 fn should_refresh_dir(change: notify::Event) -> bool {
     // Its hard to use the changes api notify provides so for now there will be just a refreshed when any changes are made
