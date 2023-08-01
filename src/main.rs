@@ -131,8 +131,15 @@ impl eframe::App for FileExplorer {
                     self.error_dialog = Some(message);
                 }
             }
-            
-            let file_list = file_list::FileListWidget::new(&self.child_directories, self.selected_index);
+            let mut file_list = file_list::FileListWidget::new(&self.child_directories, self.selected_index);
+            ui.horizontal(|ui| {
+                if ui.button("new folder").clicked() {
+                    file_list.new_item(file_list::ItemKind::Directory);
+                }
+                if ui.button("new file").clicked() {
+                    file_list.new_item(file_list::ItemKind::File);
+                }
+            });
             let open_request = file_list.show(ui);
             if let Some(action) = open_request {
                 match action {
@@ -141,6 +148,20 @@ impl eframe::App for FileExplorer {
                             self.error_dialog = Some(error);
                         }
                     },
+                    file_list::FileListAction::Create(item) => {
+                        match item.kind {
+                            file_list::ItemKind::File => {
+                                if let Err(error) = fs::write(item.name, "") {
+                                    self.error_dialog = Some(error.to_string());
+                                }
+                            },
+                            file_list::ItemKind::Directory => {
+                                if let Err(error) = fs::create_dir(item.name) {
+                                    self.error_dialog = Some(error.to_string());
+                                }
+                            },
+                        }
+                    }, 
                     file_list::FileListAction::Delete(path) => {
                         if let Err(error) = self.try_delete_item(path) {
                             self.error_dialog = Some(error.to_string());
@@ -156,7 +177,7 @@ impl eframe::App for FileExplorer {
                     },
                     file_list::FileListAction::Deselect => {
                         self.selected_index = None;
-                    }, 
+                    },
                 }
             } 
         });
@@ -204,5 +225,3 @@ fn should_refresh_dir(change: notify::Event) -> bool {
         _other => false
     }
 }
-
-

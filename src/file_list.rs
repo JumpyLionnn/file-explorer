@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use crate::widgets;
+
+use crate::{widgets, gui_extension::UiHelpersExt};
 
 
 
@@ -7,9 +8,21 @@ use crate::widgets;
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 struct FileListState {
-    renaming: bool
+    renaming: bool,
+    new_item: Option<NewItem>
 }
 
+#[derive(Clone)]
+pub struct NewItem {
+    pub kind: ItemKind,
+    pub name: String
+}
+
+#[derive(Clone)]
+pub enum ItemKind {
+    File,
+    Directory
+}
 
 impl FileListState {
     pub fn load(ctx: &egui::Context, id: egui::Id) -> Option<Self> {
@@ -22,6 +35,7 @@ impl FileListState {
 }
 pub enum FileListAction {
     Open(PathBuf),
+    Create(NewItem),
     Delete(PathBuf),
     Rename(PathBuf, String),
     Select(usize),
@@ -30,27 +44,49 @@ pub enum FileListAction {
 
 pub struct FileListWidget<'a> {
     items: &'a Vec<PathBuf>,
-    selected_item_index: Option<usize>
+    selected_item_index: Option<usize>,
+    new_item: Option<ItemKind>
 }
 
 impl<'a> FileListWidget<'a> {
     pub fn new(items: &'a Vec<PathBuf>, selected_item_index: Option<usize>) -> Self {
         Self {
             items,
-            selected_item_index
+            selected_item_index,
+            new_item: None
         }
     }
 
-    pub fn show(&self, ui: &mut egui::Ui) -> Option<FileListAction> {
+    pub fn new_item(&mut self, item_kind: ItemKind) {
+        self.new_item = Some(item_kind);
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui) -> Option<FileListAction> {
         let mut file_action = None;
         let width = ui.available_width();
         let height = self.file_item_height(ui);
-        let total_rows = self.items.len();
+        let total_rows = self.items.len() + if self.new_item.is_some() {1} else {0};
         let id = egui::Id::new("file_list_state");
-        let mut state = FileListState::load(ui.ctx(), id).unwrap_or(FileListState { renaming: false });
+        let mut state = FileListState::load(ui.ctx(), id).unwrap_or(FileListState { renaming: false, new_item: None });
+        if let Some(kind) = self.new_item.take() {
+            state.new_item = Some(NewItem { kind, name: String::new() });
+        }
         let mut renaming = false;
 
-        egui::ScrollArea::vertical().show_rows(ui, height, total_rows, |ui, row_range| {
+        egui::ScrollArea::vertical().show_rows(ui, height, total_rows, |ui, mut row_range| {
+            if let Some(mut new_item) = state.new_item.take() {
+                row_range.end -= 1;
+                let item = self.temp_file_item(ui, &mut new_item.name, width);
+                if item.inner {
+                    if !new_item.name.is_empty() && !ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                        file_action = Some(FileListAction::Create(new_item));
+                    }
+                }
+                else {
+                    state.new_item = Some(new_item);
+                }
+            }
+            
             for index in row_range {
                 let entry = &self.items[index];
                 let selected = match self.selected_item_index {
@@ -84,8 +120,7 @@ impl<'a> FileListWidget<'a> {
                     }
                 });
             }
-        });
-        
+        }).inner_rect;  
         state.renaming = renaming;
         state.store(ui.ctx(), id);
 
@@ -122,6 +157,22 @@ impl<'a> FileListWidget<'a> {
             }).inner;
             egui::InnerResponse::new(text.inner, response)
         }).inner;
+        response
+    }
+
+    fn temp_file_item(&self, ui: &mut egui::Ui, name: &mut String, width: f32) -> egui::InnerResponse<bool> {
+        let size = egui::vec2(width, self.file_item_height(ui));
+        let response = ui.push_id(egui::Id::new("temp_file_item"), |ui| {
+            let rect = ui.calculate_rect_from_size(size);
+            if ui.is_rect_visible(rect) {
+                ui.painter().rect(rect, egui::Rounding::none(), ui.visuals().selection.bg_fill, egui::Stroke::NONE);
+            }
+            ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add_space(4.0);
+                let respnonse = ui.text_edit_singleline(name);
+                respnonse.lost_focus()
+            }).inner
+        });
         response
     }
 
