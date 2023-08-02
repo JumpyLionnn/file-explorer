@@ -119,12 +119,12 @@ impl<'a> FileListWidget<'a> {
         let mut file_action = None;
         let width = ui.available_width();
         let height = self.file_item_total_height(ui);
-        let total_rows = self.items.len() + if self.new_item.is_some() {1} else {0};
         let id = egui::Id::new("file_list_state");
         let mut state = FileListState::load(ui.ctx(), id).unwrap_or(FileListState { renaming: false, new_item: None });
         if let Some(kind) = self.new_item.take() {
             state.new_item = Some(NewItem { kind, name: String::new() });
         }
+        let total_rows = self.items.len() + if state.new_item.is_some() {1} else {0};
         let mut renaming = false;
 
         egui::ScrollArea::vertical().show_rows(ui, height, total_rows, |ui, mut row_range| {
