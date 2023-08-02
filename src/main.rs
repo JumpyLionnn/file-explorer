@@ -18,7 +18,8 @@ struct FileExplorer {
     receiver: mpsc::Receiver<()>,
     selected_index: Option<usize>,
     error_dialog: Option<String>,
-    delete_dialog: Option<PathBuf>
+    delete_dialog: Option<PathBuf>,
+    file_icons_manager: file_list::FileIconManager
 }
 
 impl FileExplorer {
@@ -48,7 +49,8 @@ impl FileExplorer {
             receiver,
             selected_index: None,
             error_dialog: None,
-            delete_dialog: None
+            delete_dialog: None,
+            file_icons_manager: file_list::FileIconManager::new()
         };
 
         explorer.refresh_childs();
@@ -131,7 +133,7 @@ impl eframe::App for FileExplorer {
                     self.error_dialog = Some(message);
                 }
             }
-            let mut file_list = file_list::FileListWidget::new(&self.child_directories, self.selected_index);
+            let mut file_list = file_list::FileListWidget::new(&self.child_directories, self.selected_index, &mut self.file_icons_manager);
             ui.horizontal(|ui| {
                 if ui.button("new folder").clicked() {
                     file_list.new_item(file_list::ItemKind::Directory);

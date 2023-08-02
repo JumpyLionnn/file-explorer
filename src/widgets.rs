@@ -145,18 +145,26 @@ impl RenamableLabelState {
     }
 }
 
-pub struct RenamableLabel {
+pub struct RenamableLabel<'a> {
     text: String,
-    request_renaming: bool
+    request_renaming: bool,
+    state: RenamableLabelState,
+    ctx: &'a egui::Context,
+    id: egui::Id
 }
 
 const RENAMABLE_LABLE_INPUT_MARGIN: egui::Vec2 = egui::vec2(4.0, 2.0);
 
-impl RenamableLabel {
-    pub fn new(text: String) -> Self {
+impl<'a> RenamableLabel<'a> {
+    pub fn new(text: String, ctx: &'a egui::Context) -> Self {
+        let id = egui::Id::new(&text);
+        let state = RenamableLabelState::load(ctx, id).unwrap_or(RenamableLabelState { text: None });
         Self { 
             text,
-            request_renaming: false
+            request_renaming: false,
+            state,
+            ctx,
+            id
         }
     }
 
@@ -165,22 +173,22 @@ impl RenamableLabel {
         self
     }
 
-    pub fn show(self, ui: &mut egui::Ui) -> egui::InnerResponse<Option<String>> {
-        let id = egui::Id::new(&self.text);
-        let mut state = RenamableLabelState::load(ui.ctx(), id).unwrap_or(RenamableLabelState { text: None });
-        match state.text {
+    pub fn get_text(&self) -> &str {
+        self.state.text.as_ref().unwrap_or(&self.text)
+    }
+
+    pub fn show(mut self, ui: &mut egui::Ui) -> egui::InnerResponse<Option<String>> {
+        let res = match self.state.text {
             Some(mut text) => {
                 let (renamed, response) = input(ui, &mut text, false);
                 let res;
                 if renamed {
                     res = egui::InnerResponse::new(if text.is_empty() { None } else { Some(text) }, response);
-                    state.text = None;
-                    state.store(ui.ctx(), id);
+                    self.state.text = None;
                 }
                 else {
                     res = egui::InnerResponse::new(None, response);
-                    state.text = Some(text);
-                    state.store(ui.ctx(), id);
+                    self.state.text = Some(text);
                 }
                 res
             },
@@ -189,17 +197,15 @@ impl RenamableLabel {
                     let mut text = self.text;
                     let (renamed, response) = input(ui, &mut text, true);
                     if renamed {
-                        let state = RenamableLabelState {
+                        self.state = RenamableLabelState {
                             text: None
                         };
-                        state.store(ui.ctx(), id);
                         egui::InnerResponse::new(if text.is_empty() { None } else { Some(text) }, response)
                     }
                     else {
-                        let state = RenamableLabelState {
+                        self.state = RenamableLabelState {
                             text: Some(text)
                         };
-                        state.store(ui.ctx(), id);
                         egui::InnerResponse::new(None, response)  
                     }
                 }
@@ -210,7 +216,9 @@ impl RenamableLabel {
                     }).inner
                 }
             }
-        }
+        };
+        self.state.store(self.ctx, self.id);
+        res
     }
 }
 

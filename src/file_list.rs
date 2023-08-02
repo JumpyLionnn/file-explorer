@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use std::collections::HashMap;
 use crate::{widgets, gui_extension::UiHelpersExt};
 
 
@@ -24,6 +25,57 @@ pub enum ItemKind {
     Directory
 }
 
+impl ItemKind {
+    pub fn from_path(path: &PathBuf) -> Self {
+        if path.is_dir() {
+            Self::Directory
+        }
+        else {
+            Self::File
+        }
+    }
+}
+
+pub struct FileIconManager {
+    icons: HashMap<String, egui_extras::RetainedImage>,
+    directory_icon: egui_extras::RetainedImage
+}
+
+fn get_file_extension(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(idk) => &name[idk..name.len()],
+        None => "unknown",
+    }
+}
+
+impl FileIconManager {
+    pub fn new() -> Self {
+        let buffer = include_bytes!("../assets/folder-icon.png");
+        let image = egui_extras::RetainedImage::from_image_bytes("assets/folder-icon.png", buffer)
+            .expect("unable to read the folder icon image");
+        Self {
+            icons: HashMap::new(),
+            directory_icon: image
+        }
+    }
+
+    pub fn get_icon(&mut self, name: &str) -> Option<&egui_extras::RetainedImage> {
+        let extension = get_file_extension(name);
+        Some(match self.icons.entry(extension.to_owned()) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let bytes: Vec<u8> = systemicons::get_icon(&format!(".{extension}"), 16).ok()?;
+                let image = egui_extras::RetainedImage::from_image_bytes(extension, &bytes).ok()?;
+                entry.insert(image)
+            },
+        })
+    }
+
+    pub fn get_directory_icon(&self) -> &egui_extras::RetainedImage {
+        &self.directory_icon
+    }
+}
+
 impl FileListState {
     pub fn load(ctx: &egui::Context, id: egui::Id) -> Option<Self> {
         ctx.data(|d| d.get_temp(id))
@@ -45,14 +97,16 @@ pub enum FileListAction {
 pub struct FileListWidget<'a> {
     items: &'a Vec<PathBuf>,
     selected_item_index: Option<usize>,
+    icons: &'a mut FileIconManager,
     new_item: Option<ItemKind>
 }
-
+const FILE_ITEM_PADDING: f32 = 4.0;
 impl<'a> FileListWidget<'a> {
-    pub fn new(items: &'a Vec<PathBuf>, selected_item_index: Option<usize>) -> Self {
+    pub fn new(items: &'a Vec<PathBuf>, selected_item_index: Option<usize>, icons: &'a mut FileIconManager) -> Self {
         Self {
             items,
             selected_item_index,
+            icons,
             new_item: None
         }
     }
@@ -64,7 +118,7 @@ impl<'a> FileListWidget<'a> {
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<FileListAction> {
         let mut file_action = None;
         let width = ui.available_width();
-        let height = self.file_item_height(ui);
+        let height = self.file_item_total_height(ui);
         let total_rows = self.items.len() + if self.new_item.is_some() {1} else {0};
         let id = egui::Id::new("file_list_state");
         let mut state = FileListState::load(ui.ctx(), id).unwrap_or(FileListState { renaming: false, new_item: None });
@@ -76,7 +130,7 @@ impl<'a> FileListWidget<'a> {
         egui::ScrollArea::vertical().show_rows(ui, height, total_rows, |ui, mut row_range| {
             if let Some(mut new_item) = state.new_item.take() {
                 row_range.end -= 1;
-                let item = self.temp_file_item(ui, &mut new_item.name, width);
+                let item = self.temp_file_item(ui, &mut new_item, width);
                 if item.inner {
                     if !new_item.name.is_empty() && !ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                         file_action = Some(FileListAction::Create(new_item));
@@ -127,8 +181,8 @@ impl<'a> FileListWidget<'a> {
         file_action
     }
 
-    fn file_item(&self, ui: &mut egui::Ui, path: &PathBuf, width: f32, selected: bool, renaming: bool) -> egui::InnerResponse<Option<String>> {
-        let size = egui::vec2(width, self.file_item_height(ui));
+    fn file_item(&mut self, ui: &mut egui::Ui, path: &PathBuf, width: f32, selected: bool, renaming: bool) -> egui::InnerResponse<Option<String>> {
+        let size = egui::vec2(width, self.file_item_total_height(ui));
         let name =  path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("unknown")).to_string_lossy().to_string();
         
         let response = ui.push_id(egui::Id::new(&name), |ui| {
@@ -148,8 +202,11 @@ impl<'a> FileListWidget<'a> {
             ui.add_space(-(rect.height() + ui.spacing().item_spacing.y)); 
     
             let text = ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add_space(4.0);
-                let mut label = widgets::RenamableLabel::new(name);
+                ui.spacing_mut().item_spacing = egui::vec2(FILE_ITEM_PADDING, 0.0);
+                ui.add_space(FILE_ITEM_PADDING);
+                let ctx = ui.ctx().clone();
+                let mut label = widgets::RenamableLabel::new(name, &ctx);
+                self.add_icon(ui, &ItemKind::from_path(path), label.get_text());
                 if renaming && selected {
                     label.rename();
                 }
@@ -160,8 +217,8 @@ impl<'a> FileListWidget<'a> {
         response
     }
 
-    fn temp_file_item(&self, ui: &mut egui::Ui, name: &mut String, width: f32) -> egui::InnerResponse<bool> {
-        let size = egui::vec2(width, self.file_item_height(ui));
+    fn temp_file_item(&mut self, ui: &mut egui::Ui, item: &mut NewItem, width: f32) -> egui::InnerResponse<bool> {
+        let size = egui::vec2(width, self.file_item_total_height(ui));
         let response = ui.push_id(egui::Id::new("temp_file_item"), |ui| {
             let rect = ui.calculate_rect_from_size(size);
             if ui.is_rect_visible(rect) {
@@ -169,15 +226,35 @@ impl<'a> FileListWidget<'a> {
             }
             ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
-                let respnonse = ui.text_edit_singleline(name);
+                self.add_icon(ui, &item.kind, &item.name);
+                let respnonse = ui.text_edit_singleline(&mut item.name);
                 respnonse.lost_focus()
             }).inner
         });
         response
     }
 
-    fn file_item_height(&self, ui: &egui::Ui) -> f32 {
-        let item_padding_y = 8.0;
-        ui.spacing().interact_size.y + item_padding_y
+    fn add_icon(&mut self, ui: &mut egui::Ui, kind: &ItemKind, name: &str) {
+        let height = self.file_item_height(ui);
+        let icon_size = egui::vec2(height, height);
+        match kind {
+            ItemKind::File => {
+                if let Some(icon) = self.icons.get_icon(&name) {
+                    icon.show_size(ui, icon_size);
+                }
+            },
+            ItemKind::Directory => {
+                self.icons.get_directory_icon().show_size(ui, icon_size);
+            },
+        }
     }
+
+    fn file_item_total_height(&self, ui: &egui::Ui) -> f32 {
+        self.file_item_height(ui) + FILE_ITEM_PADDING * 2.0
+    }
+
+    fn file_item_height(&self, ui: &egui::Ui) -> f32 {
+        ui.spacing().interact_size.y
+    }
+    
 }
