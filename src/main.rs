@@ -1,12 +1,12 @@
 mod widgets;
 mod gui_extension;
 mod file_list;
+mod watcher;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::mpsc;
-use notify::Watcher;
 use eframe::egui;
+use watcher::Watcher;
 
 fn main() {
     eframe::run_native("file explorer", Default::default(), Box::new(|cc| Box::new(FileExplorer::new(cc)))).unwrap();
@@ -14,43 +14,35 @@ fn main() {
 struct FileExplorer {
     child_directories: Vec<PathBuf>,
     directory: PathBuf,
-    watcher: notify::RecommendedWatcher,
-    receiver: mpsc::Receiver<()>,
     selected_index: Option<usize>,
     error_dialog: Option<String>,
     delete_dialog: Option<PathBuf>,
-    file_icons_manager: file_list::FileIconManager
+    file_icons_manager: file_list::FileIconManager,
+    watcher: Box<dyn Watcher>
 }
 
 impl FileExplorer {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let current_dir = env::current_dir().expect("Couldnt get the working directory!");
-        let (sender, receiver) = mpsc::channel();
-        let context = cc.egui_ctx.clone();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                if should_refresh_dir(event) {
-                    sender.send(()).unwrap();
-                    context.request_repaint();
-                }
-            }
-        }).unwrap();
-        watcher.watch(&current_dir.as_path(), notify::RecursiveMode::NonRecursive).unwrap();
 
         let mut style = (*cc.egui_ctx.style()).clone();
         style.visuals.menu_rounding = egui::Rounding::none();
         style.spacing.menu_margin = egui::Margin::same(2.0);
         cc.egui_ctx.set_style(style);
 
+        let context = cc.egui_ctx.clone();
+        let watcher = Box::new(watcher::FileSystemWatcher::new(current_dir.clone(), move || {
+            context.request_repaint();
+        }));
+
         let mut explorer =  Self { 
             directory: current_dir,
             child_directories: Vec::new(),
-            watcher,
-            receiver,
             selected_index: None,
             error_dialog: None,
             delete_dialog: None,
-            file_icons_manager: file_list::FileIconManager::new()
+            file_icons_manager: file_list::FileIconManager::new(),
+            watcher: watcher
         };
 
         explorer.refresh_childs();
@@ -70,15 +62,7 @@ impl FileExplorer {
     }
 
     fn change_dir(&mut self, path: PathBuf) -> Result<(), String> {
-        let _ = self.watcher.unwatch(&self.directory.as_path());
-        if let Err(err) = self.watcher.watch(path.as_path(), notify::RecursiveMode::NonRecursive) {
-            let error_message = match err.kind {
-                notify::ErrorKind::Generic(message) => message,
-                notify::ErrorKind::Io(error) => format!("{error}"),
-                other => format!("Internal error {:?}", other)
-            };
-            return Err(error_message);
-        }
+        self.watcher.watch(path.clone())?;
         self.directory = path;
         self.refresh_childs();
         Ok(())
@@ -122,8 +106,19 @@ impl FileExplorer {
 
 impl eframe::App for FileExplorer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Ok(_) = self.receiver.try_recv() {
-            self.refresh_childs();
+        if let Some(change) = self.watcher.look_for_changes() {
+            match change {
+                watcher::Change::Unknown => self.refresh_childs(),
+                watcher::Change::Create(_kind, path) => self.child_directories.push(path),
+                watcher::Change::Remove(path) => self.child_directories.retain(|p: &PathBuf| *p != path),
+                watcher::Change::Rename(from, to) => {
+                    let item = self.child_directories.iter_mut().find(|p| **p == from);
+                    if let Some(item) = item {
+                        *item = to;
+                    }
+                },
+                watcher::Change::Modify(_) => {},
+            }
         }
         
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -208,22 +203,5 @@ impl eframe::App for FileExplorer {
                 self.delete_dialog = None;
             }
         }
-    }
-}
-
-
-fn should_refresh_dir(change: notify::Event) -> bool {
-    // Its hard to use the changes api notify provides so for now there will be just a refreshed when any changes are made
-    match change.kind {
-        notify::event::EventKind::Create(_) | 
-        notify::event::EventKind::Remove(_)  => true,
-        notify::event::EventKind::Modify(kind) => match kind {
-            notify::event::ModifyKind::Name(rename_kind) => match rename_kind {
-                notify::event::RenameMode::From => false,
-                _other => true
-            },
-            _other => false
-        },
-        _other => false
     }
 }
