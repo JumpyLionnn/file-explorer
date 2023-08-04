@@ -2,23 +2,25 @@ mod widgets;
 mod gui_extension;
 mod file_list;
 mod watcher;
+mod icon_manager;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use eframe::egui;
+use file_list::FileListItem;
 use watcher::Watcher;
 
 fn main() {
     eframe::run_native("file explorer", Default::default(), Box::new(|cc| Box::new(FileExplorer::new(cc)))).unwrap();
 }
 struct FileExplorer {
-    child_directories: Vec<PathBuf>,
+    child_directories: Vec<file_list::FileListItem>,
     directory: PathBuf,
-    selected_index: Option<usize>,
     error_dialog: Option<String>,
     delete_dialog: Option<PathBuf>,
-    file_icons_manager: file_list::FileIconManager,
-    watcher: Box<dyn Watcher>
+    file_icons_manager: icon_manager::IconManager,
+    watcher: Box<dyn Watcher>,
+    file_list: file_list::FileListWidget
 }
 
 impl FileExplorer {
@@ -38,11 +40,11 @@ impl FileExplorer {
         let mut explorer =  Self { 
             directory: current_dir,
             child_directories: Vec::new(),
-            selected_index: None,
             error_dialog: None,
             delete_dialog: None,
-            file_icons_manager: file_list::FileIconManager::new(),
-            watcher: watcher
+            file_icons_manager: icon_manager::IconManager::new(),
+            watcher: watcher,
+            file_list: file_list::FileListWidget::new()
         };
 
         explorer.refresh_childs();
@@ -55,7 +57,7 @@ impl FileExplorer {
         if let Ok(entries) = fs::read_dir(&self.directory) {
             for entry in entries {
                 if let Ok(entry) = entry {
-                    self.child_directories.push(entry.path());
+                    self.child_directories.push(FileListItem::new(entry.path()));
                 }
             }
         }
@@ -109,12 +111,12 @@ impl eframe::App for FileExplorer {
         if let Some(change) = self.watcher.look_for_changes() {
             match change {
                 watcher::Change::Unknown => self.refresh_childs(),
-                watcher::Change::Create(_kind, path) => self.child_directories.push(path),
-                watcher::Change::Remove(path) => self.child_directories.retain(|p: &PathBuf| *p != path),
+                watcher::Change::Create(_kind, path) => self.child_directories.push(FileListItem::new(path)),
+                watcher::Change::Remove(path) => self.child_directories.retain(|p| *p.path != path),
                 watcher::Change::Rename(from, to) => {
-                    let item = self.child_directories.iter_mut().find(|p| **p == from);
+                    let item = self.child_directories.iter_mut().find(|p| *p.path == from);
                     if let Some(item) = item {
-                        *item = to;
+                        *item = FileListItem::new(to);
                     }
                 },
                 watcher::Change::Modify(_) => {},
@@ -128,17 +130,16 @@ impl eframe::App for FileExplorer {
                     self.error_dialog = Some(message);
                 }
             }
-            let mut file_list = file_list::FileListWidget::new(&self.child_directories, self.selected_index, &mut self.file_icons_manager);
             ui.horizontal(|ui| {
                 if ui.button("new folder").clicked() {
-                    file_list.new_item(file_list::ItemKind::Directory);
+                    self.file_list.new_item(file_list::ItemKind::Directory);
                 }
                 if ui.button("new file").clicked() {
-                    file_list.new_item(file_list::ItemKind::File);
+                    self.file_list.new_item(file_list::ItemKind::File);
                 }
             });
-            let open_request = file_list.show(ui);
-            if let Some(action) = open_request {
+            let actions = self.file_list.show(ui, &self.child_directories, &mut self.file_icons_manager);
+            for action in actions {
                 match action {
                     file_list::FileListAction::Open(path) => {
                         if let Err(error) = self.open(path) {
@@ -170,10 +171,10 @@ impl eframe::App for FileExplorer {
                         }
                     },
                     file_list::FileListAction::Select(index) => {
-                        self.selected_index = Some(index);
+                        self.child_directories[index].selected = true;
                     },
-                    file_list::FileListAction::Deselect => {
-                        self.selected_index = None;
+                    file_list::FileListAction::Deselect(index) => {
+                        self.child_directories[index].selected = false;
                     },
                 }
             } 
