@@ -3,6 +3,7 @@ mod gui_extension;
 mod file_list;
 mod watcher;
 mod icon_manager;
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -16,7 +17,7 @@ fn main() {
 struct FileExplorer {
     child_directories: Vec<file_list::FileListItem>,
     directory: PathBuf,
-    error_dialog: Option<String>,
+    error_dialogs: VecDeque<String>,
     delete_dialog: Option<PathBuf>,
     file_icons_manager: icon_manager::IconManager,
     watcher: Box<dyn Watcher>,
@@ -28,6 +29,7 @@ impl FileExplorer {
         let current_dir = env::current_dir().expect("Couldnt get the working directory!");
 
         let mut style = (*cc.egui_ctx.style()).clone();
+        style.visuals.window_rounding = egui::Rounding::same(5.0);
         style.visuals.menu_rounding = egui::Rounding::none();
         style.spacing.menu_margin = egui::Margin::same(2.0);
         cc.egui_ctx.set_style(style);
@@ -40,7 +42,7 @@ impl FileExplorer {
         let mut explorer =  Self { 
             directory: current_dir,
             child_directories: Vec::new(),
-            error_dialog: None,
+            error_dialogs: VecDeque::new(),
             delete_dialog: None,
             file_icons_manager: icon_manager::IconManager::new(),
             watcher: watcher,
@@ -70,7 +72,7 @@ impl FileExplorer {
         Ok(())
     }
 
-    fn open(&mut self, path: PathBuf) -> Result<(), String> {
+    fn try_open(&mut self, path: PathBuf) -> Result<(), String> {
         if path.is_dir() {
             self.change_dir(path)?;
         }
@@ -104,6 +106,74 @@ impl FileExplorer {
         }
         Ok(())
     }
+
+    fn update_delete_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(path) = &self.delete_dialog {
+            let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("unknown")).to_string_lossy().to_string();
+            let item_type = if path.is_file() {"file"} else if path.is_dir() {"folder"} else {"item"};
+            if let Some(res) = widgets::delete_dialog(ctx, &name, item_type) {
+                if res {
+                    if path.is_file() {
+                        if let Err(error) = fs::remove_file(path) {
+                            self.report_error(error.to_string());
+                        }
+                    }
+                    else if path.is_dir() {
+                        if let Err(error) = fs::remove_dir_all(path) {
+                            self.report_error(error.to_string());
+                        }
+                    }
+                }
+                self.delete_dialog = None;
+            }
+        }
+    }
+
+    fn handle_action(&mut self, action: file_list::FileListAction) {
+        match action {
+            file_list::FileListAction::Open(path) => {
+                if let Err(error) = self.try_open(path) {
+                    self.report_error(error);
+                }
+            },
+            file_list::FileListAction::Create(item) => {
+                match item.kind {
+                    file_list::ItemKind::File => {
+                        if let Err(error) = fs::write(self.directory.join(item.name), "") {
+                            self.report_error(error.to_string());
+                        }
+                    },
+                    file_list::ItemKind::Directory => {
+                        if let Err(error) = fs::create_dir(self.directory.join(item.name)) {
+                            self.report_error(error.to_string());
+                        }
+                    },
+                }
+            }, 
+            file_list::FileListAction::Delete(path) => {
+                if let Err(error) = self.try_delete_item(path) {
+                    self.report_error(error.to_string());
+                }
+            },
+            file_list::FileListAction::Rename(path, name) => {
+                let mut to = path.clone();
+                to.set_file_name(name);
+                if let Err(error) = fs::rename(path, to) {
+                    self.report_error(error.to_string());
+                }
+            },
+            file_list::FileListAction::Select(index) => {
+                self.child_directories[index].selected = true;
+            },
+            file_list::FileListAction::Deselect(index) => {
+                self.child_directories[index].selected = false;
+            },
+        }
+    }
+
+    fn report_error(&mut self, message: String) {
+        self.error_dialogs.push_front(message);
+    }
 }
 
 impl eframe::App for FileExplorer {
@@ -124,10 +194,12 @@ impl eframe::App for FileExplorer {
         }
         
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.set_enabled(self.delete_dialog.is_none() && self.error_dialogs.is_empty());
+
             let width = ui.available_width();
             if let Some(path) = widgets::path_navigation_bar(ui, &self.directory, width) {
                 if let Err(message) = self.change_dir(path) {
-                    self.error_dialog = Some(message);
+                    self.report_error(message);
                 }
             }
             ui.horizontal(|ui| {
@@ -140,69 +212,17 @@ impl eframe::App for FileExplorer {
             });
             let actions = self.file_list.show(ui, &self.child_directories, &mut self.file_icons_manager);
             for action in actions {
-                match action {
-                    file_list::FileListAction::Open(path) => {
-                        if let Err(error) = self.open(path) {
-                            self.error_dialog = Some(error);
-                        }
-                    },
-                    file_list::FileListAction::Create(item) => {
-                        match item.kind {
-                            file_list::ItemKind::File => {
-                                if let Err(error) = fs::write(item.name, "") {
-                                    self.error_dialog = Some(error.to_string());
-                                }
-                            },
-                            file_list::ItemKind::Directory => {
-                                if let Err(error) = fs::create_dir(item.name) {
-                                    self.error_dialog = Some(error.to_string());
-                                }
-                            },
-                        }
-                    }, 
-                    file_list::FileListAction::Delete(path) => {
-                        if let Err(error) = self.try_delete_item(path) {
-                            self.error_dialog = Some(error.to_string());
-                        }
-                    },
-                    file_list::FileListAction::Rename(path, name) => {
-                        if let Err(error) = fs::rename(path, name) {
-                            self.error_dialog = Some(error.to_string());
-                        }
-                    },
-                    file_list::FileListAction::Select(index) => {
-                        self.child_directories[index].selected = true;
-                    },
-                    file_list::FileListAction::Deselect(index) => {
-                        self.child_directories[index].selected = false;
-                    },
-                }
+                self.handle_action(action);
             } 
         });
 
-        if let Some(message) = &self.error_dialog {
+        if let Some(message) = self.error_dialogs.back() {
             if widgets::error_dialog(ctx, message) {
-                self.error_dialog = None;
+                self.error_dialogs.pop_back();
             }
         }
-        if let Some(path) = &self.delete_dialog {
-            let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("unknown")).to_string_lossy().to_string();
-            let item_type = if path.is_file() {"file"} else if path.is_dir() {"folder"} else {"item"};
-            if let Some(res) = widgets::delete_dialog(ctx, &name, item_type) {
-                if res {
-                    if path.is_file() {
-                        if let Err(err) = fs::remove_file(path) {
-                            self.error_dialog = Some(err.to_string());
-                        }
-                    }
-                    else if path.is_dir() {
-                        if let Err(err) = fs::remove_dir_all(path) {
-                            self.error_dialog = Some(err.to_string());
-                        }
-                    }
-                }
-                self.delete_dialog = None;
-            }
+        else {
+            self.update_delete_dialog(ctx);
         }
     }
 }

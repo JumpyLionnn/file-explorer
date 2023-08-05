@@ -2,9 +2,6 @@ use std::path::{PathBuf, self};
 
 use crate::gui_extension::*;
 
-
-
-
 pub fn path_navigation_bar(ui: &mut egui::Ui, path: &PathBuf, width: f32) -> Option<path::PathBuf> {
     let component_padding = egui::vec2(5.0, 7.0);
     let total_component_padding = component_padding * 2.0;

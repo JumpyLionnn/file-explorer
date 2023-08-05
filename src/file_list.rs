@@ -93,7 +93,7 @@ impl FileListWidget {
                 if item_response.response.double_clicked() {
                     actions.push(FileListAction::Open(item.path.clone()));
                 }
-                else if ui.pointer_pressed_at(rect) {
+                else if ui.pointer_pressed_at(rect) && ui.is_enabled() {
                     actions.push(FileListAction::Select(index));
                 }
                 if let Some(text) = item_response.inner {
@@ -113,7 +113,7 @@ impl FileListWidget {
                     }
                     context_menu_clicked = ui.pointer_pressed_at(ui.max_rect());
                 });
-                if item.selected && pressed_outside && !context_menu_clicked {
+                if item.selected && pressed_outside && !context_menu_clicked && ui.is_enabled() {
                     actions.push(FileListAction::Deselect(index));
                 }
             }
@@ -172,11 +172,11 @@ impl FileListWidget {
         match kind {
             ItemKind::File => {
                 if let Some(icon) = icons.get_icon(&name) {
-                    icon.show_size(ui, icon_size);
+                    ui.image_consider_disabled(icon, icon_size);
                 }
             },
             ItemKind::Directory => {
-                icons.get_directory_icon().show_size(ui, icon_size);
+                ui.image_consider_disabled(icons.get_directory_icon(), icon_size);
             },
         }
     }

@@ -7,6 +7,7 @@ pub trait UiHelpersExt {
     fn get_text_style_height(&self, style: egui::style::TextStyle) -> f32;
     fn calculate_rect_from_size(&self, size: egui::Vec2) -> egui::Rect;
     fn str_to_text_galley(&self, text: &str, fallback_font:  impl Into<egui::FontSelection>) -> egui::widget_text::WidgetTextGalley;
+    fn image_consider_disabled(&mut self, image: &egui_extras::RetainedImage, size: egui::Vec2);
     fn custom_widget<T>(&mut self, size: egui::Vec2, add_contents: impl FnOnce(&mut egui::Ui, egui::Rect, &mut egui::Response) -> T) -> InnerResponse<T>;
 
     fn pointer_pressed_at(&self, rect: egui::Rect) -> bool;
@@ -27,6 +28,14 @@ impl UiHelpersExt for egui::Ui {
     fn str_to_text_galley(&self, text: &str, fallback_font:  impl Into<egui::FontSelection>) -> egui::widget_text::WidgetTextGalley {
         let text: egui::WidgetText = text.into();
         text.into_galley(self, Some(false), f32::INFINITY, fallback_font)
+    }
+
+    fn image_consider_disabled(&mut self, image: &egui_extras::RetainedImage, size: egui::Vec2) {
+        let mut image = egui::Image::new(image.texture_id(self.ctx()), size);
+        if !self.is_enabled() {
+            image = image.tint(egui::Color32::from_rgba_premultiplied(160, 160, 160, 190));
+        }
+        self.add(image);
     }
 
     fn custom_widget<T>(&mut self, size: egui::Vec2, add_contents: impl FnOnce(&mut egui::Ui, egui::Rect, &mut egui::Response) -> T) -> InnerResponse<T> {
